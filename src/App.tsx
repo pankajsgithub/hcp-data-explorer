@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { generateRows } from './starter/data-generator';
 import { TENANT_THEMES, DEFAULT_THEME, type TenantTheme } from './starter/theme-config';
 import { sanitizeTheme, applyThemeToCssVariables } from './utils/theme';
+import { buildFlattenedGridData } from './utils/aggregation';
 import { HcpGrid } from './components/HcpGrid';
 import './App.css';
 
@@ -19,19 +20,36 @@ const DEMO_DARK_THEME: Partial<TenantTheme> = {
 export function App() {
   const [selectedTenant, setSelectedTenant] = useState<string>('default');
   const [activeTheme, setActiveTheme] = useState<TenantTheme>(DEFAULT_THEME);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  // Generate 50,000 deterministic records
-  const { rawRecords, renderDuration } = useMemo(() => {
-    const startTime = performance.now();
-    const data = generateRows(42, 50000);
-    const endTime = performance.now();
+  // Generate 50,000 deterministic records once
+  const rawRecords = useMemo(() => generateRows(42, 50000), []);
+
+  // Build grouped data when collapsed state updates
+  const { flattenedRows, aggregationDuration } = useMemo(() => {
+    const start = performance.now();
+    const rows = buildFlattenedGridData(rawRecords, collapsedGroups);
+    const end = performance.now();
     return {
-      rawRecords: data,
-      renderDuration: endTime - startTime,
+      flattenedRows: rows,
+      aggregationDuration: end - start,
     };
+  }, [rawRecords, collapsedGroups]);
+
+  // Toggle group expand / collapse
+  const handleToggleGroup = useCallback((groupKey: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
   }, []);
 
-  // Update theme when selection changes
+  // Update theme when selectedTenant changes
   useEffect(() => {
     let rawConfig: Partial<TenantTheme> | undefined;
 
@@ -68,7 +86,12 @@ export function App() {
       </header>
 
       <main>
-        <HcpGrid records={rawRecords} renderDuration={renderDuration} />
+        <HcpGrid
+          rows={flattenedRows}
+          totalSourceRecords={rawRecords.length}
+          renderDuration={aggregationDuration}
+          onToggleGroup={handleToggleGroup}
+        />
       </main>
     </div>
   );
