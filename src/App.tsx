@@ -1,23 +1,37 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { generateRows } from './starter/data-generator';
 import { TENANT_THEMES, DEFAULT_THEME, type TenantTheme } from './starter/theme-config';
 import { sanitizeTheme, applyThemeToCssVariables } from './utils/theme';
+import { HcpGrid } from './components/HcpGrid';
 import './App.css';
 
-// Additional Custom test config to visually verify runtime CSS variable changes
+// Custom test config to visually verify runtime CSS variable changes
 const DEMO_DARK_THEME: Partial<TenantTheme> = {
   appName: 'Dark Enterprise IQ',
-  primary: '#10B981', // Emerald green
+  primary: '#10B981',
   onPrimary: '#FFFFFF',
-  background: '#0F172A', // Slate dark
-  surface: '#1E293B',
-  text: '#F8FAFC',
+  background: '#0F172A',
+  surface: '#535b68',
+  text: '#4a4c4c',
   radius: 16,
 };
 
 export function App() {
   const [selectedTenant, setSelectedTenant] = useState<string>('default');
-  const [activeTheme, setActiveTheme] = useState(DEFAULT_THEME);
+  const [activeTheme, setActiveTheme] = useState<TenantTheme>(DEFAULT_THEME);
 
+  // Generate 50,000 deterministic records
+  const { rawRecords, renderDuration } = useMemo(() => {
+    const startTime = performance.now();
+    const data = generateRows(42, 50000);
+    const endTime = performance.now();
+    return {
+      rawRecords: data,
+      renderDuration: endTime - startTime,
+    };
+  }, []);
+
+  // Update theme when selection changes
   useEffect(() => {
     let rawConfig: Partial<TenantTheme> | undefined;
 
@@ -35,7 +49,7 @@ export function App() {
   }, [selectedTenant]);
 
   return (
-    <div style={{ minHeight: '100vh', padding: '20px', backgroundColor: 'var(--color-background)', color: 'var(--color-text)' }}>
+    <div style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto' }}>
       <header className="app-header">
         <h1 style={{ margin: 0, fontSize: '20px' }}>{activeTheme.appName}</h1>
         <div>
@@ -53,11 +67,9 @@ export function App() {
         </div>
       </header>
 
-      <div style={{ padding: '24px', background: 'var(--color-surface)', borderRadius: 'var(--border-radius)', border: '1px solid #e2e8f0' }}>
-        <p><strong>Active Theme:</strong> {activeTheme.appName}</p>
-        <p><strong>Primary Color:</strong> {activeTheme.primary}</p>
-        <p><strong>Border Radius:</strong> {activeTheme.radius}px</p>
-      </div>
+      <main>
+        <HcpGrid records={rawRecords} renderDuration={renderDuration} />
+      </main>
     </div>
   );
 }
