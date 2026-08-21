@@ -1,5 +1,5 @@
-import { type HcpRecord } from '../starter/data-generator';
-import type { FlattenedRow, GroupAggregate, SortConfig, SortDirection } from '../types';
+import type { HcpRecord } from '../starter/data-generator';
+import type { CellEditState, FlattenedRow, GroupAggregate, SortConfig, SortDirection } from '../types';
 
 export function calculateCPI(calls: number, trx: number): number | null {
   if (trx <= 0 || isNaN(calls) || isNaN(trx)) {
@@ -8,9 +8,6 @@ export function calculateCPI(calls: number, trx: number): number | null {
   return Math.round((calls / trx) * 100);
 }
 
-/**
- * Comparator for sorting values safely, putting nulls at the end
- */
 function compareValues(a: unknown, b: unknown, direction: SortDirection): number {
   if (direction === null) return 0;
   const mod = direction === 'asc' ? 1 : -1;
@@ -32,24 +29,24 @@ export function buildFlattenedGridData(
   collapsedGroups: Set<string>,
   searchTerm: string,
   regionFilter: string,
-  sortConfig: SortConfig
+  sortConfig: SortConfig,
+  edits: Record<string, CellEditState>
 ): FlattenedRow[] {
   const query = searchTerm.trim().toLowerCase();
   const isSearching = query.length > 0;
 
-  // 1. Group matching records into Region -> Territory
   const tree = new Map<string, Map<string, { record: HcpRecord; rowKey: string }[]>>();
 
   for (let i = 0; i < records.length; i++) {
     const row = records[i];
     const rowKey = `${row.id}_${i}`;
 
-    // Apply Region Filter
+    // Apply region filter if active
     if (regionFilter !== 'All' && row.region !== regionFilter) {
       continue;
     }
 
-    // Apply Search Filter on Name or ID
+    // Apply search filter if active
     if (isSearching) {
       const matchName = row.name.toLowerCase().includes(query);
       const matchId = row.id.toLowerCase().includes(query);
@@ -66,8 +63,7 @@ export function buildFlattenedGridData(
     }
     territoryMap.get(row.territory)!.push({ record: row, rowKey });
   }
-
-  // 2. Build aggregated group objects
+  // Build aggregated group objects for regions and territories, then flatten into a single array for rendering
   interface RegionAggEntry {
     aggregate: GroupAggregate;
     territoryRows: {
@@ -94,9 +90,17 @@ export function buildFlattenedGridData(
       let terrTrx = 0;
       let terrNrx = 0;
 
-      items.forEach(({ record }) => {
-        const parsedCalls = typeof record.calls === 'number' ? record.calls : Number(record.calls) || 0;
-        terrCalls += parsedCalls;
+      items.forEach(({ record, rowKey }) => {
+        const edit = edits[rowKey];
+        // Pending edits are strictly excluded from aggregates; only saved edits apply (FR-2 / FR-4)
+        const activeCalls =
+          edit && edit.status === 'saved'
+            ? edit.value
+            : typeof record.calls === 'number'
+            ? record.calls
+            : Number(record.calls) || 0;
+
+        terrCalls += activeCalls;
         terrTrx += record.trx;
         terrNrx += record.nrx;
       });
@@ -117,21 +121,28 @@ export function buildFlattenedGridData(
         collapsed: isTerrCollapsed,
       };
 
-      // Sort leaf records inside territory if sort is active
+      // Sort items inside territory
       const sortedItems = [...items];
       if (sortConfig.direction) {
         sortedItems.sort((a, b) => {
           let valA: unknown;
           let valB: unknown;
 
+          const getCallsValue = (item: { record: HcpRecord; rowKey: string }) => {
+            const ed = edits[item.rowKey];
+            return ed && ed.status === 'saved'
+              ? ed.value
+              : typeof item.record.calls === 'number'
+              ? item.record.calls
+              : Number(item.record.calls) || 0;
+          };
+
           if (sortConfig.column === 'cpi') {
-            const callsA = typeof a.record.calls === 'number' ? a.record.calls : Number(a.record.calls) || 0;
-            const callsB = typeof b.record.calls === 'number' ? b.record.calls : Number(b.record.calls) || 0;
-            valA = calculateCPI(callsA, a.record.trx);
-            valB = calculateCPI(callsB, b.record.trx);
+            valA = calculateCPI(getCallsValue(a), a.record.trx);
+            valB = calculateCPI(getCallsValue(b), b.record.trx);
           } else if (sortConfig.column === 'calls') {
-            valA = typeof a.record.calls === 'number' ? a.record.calls : Number(a.record.calls) || 0;
-            valB = typeof b.record.calls === 'number' ? b.record.calls : Number(b.record.calls) || 0;
+            valA = getCallsValue(a);
+            valB = getCallsValue(b);
           } else {
             valA = a.record[sortConfig.column as keyof HcpRecord];
             valB = b.record[sortConfig.column as keyof HcpRecord];
@@ -164,7 +175,7 @@ export function buildFlattenedGridData(
     regionAggregates.push({ aggregate: regionAggregate, territoryRows: territoryAggList });
   }
 
-  // 3. Sort Region and Territory groups by aggregate values if numeric column is sorted
+  // Sort groups by aggregate value
   if (sortConfig.direction) {
     const getGroupValue = (agg: GroupAggregate) => {
       switch (sortConfig.column) {
@@ -176,12 +187,12 @@ export function buildFlattenedGridData(
       }
     };
 
-    // Sort Regions
+    // Sort regions
     regionAggregates.sort((a, b) =>
       compareValues(getGroupValue(a.aggregate), getGroupValue(b.aggregate), sortConfig.direction)
     );
 
-    // Sort Territories within each Region
+    // Sort territories within each region
     regionAggregates.forEach((reg) => {
       reg.territoryRows.sort((a, b) =>
         compareValues(getGroupValue(a.aggregate), getGroupValue(b.aggregate), sortConfig.direction)
@@ -189,7 +200,7 @@ export function buildFlattenedGridData(
     });
   }
 
-  // 4. Flatten hierarchy into 1D list
+  // Flatten the hierarchical structure into a single array for rendering
   const flattened: FlattenedRow[] = [];
 
   for (const reg of regionAggregates) {

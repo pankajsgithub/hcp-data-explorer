@@ -3,6 +3,7 @@ import { generateRows } from './starter/data-generator';
 import { TENANT_THEMES, DEFAULT_THEME, type TenantTheme } from './starter/theme-config';
 import { sanitizeTheme, applyThemeToCssVariables } from './utils/theme';
 import { buildFlattenedGridData } from './utils/aggregation';
+import { useTableStore } from './hooks/useTableStore';
 import { HcpGrid } from './components/HcpGrid';
 import type { SortConfig, SortDirection } from './types';
 import type { HcpRecord } from './starter/data-generator';
@@ -30,10 +31,13 @@ export function App() {
   const [regionFilter, setRegionFilter] = useState<string>('All');
   const [sortConfig, setSortConfig] = useState<SortConfig>({ column: 'calls', direction: null });
 
+  // Store: Edits, Async Validation & Command Stack
+  const { edits, commitEdit, undo, redo, canUndo, canRedo } = useTableStore();
+
   // 1. Generate 50,000 deterministic records once
   const rawRecords = useMemo(() => generateRows(42, 50000), []);
 
-  // 2. Build filtered, sorted, flattened grid data
+  // 2. Build filtered, sorted, flattened grid data incorporating saved edits
   const { flattenedRows, aggregationDuration } = useMemo(() => {
     const start = performance.now();
     const rows = buildFlattenedGridData(
@@ -41,14 +45,15 @@ export function App() {
       collapsedGroups,
       searchTerm,
       regionFilter,
-      sortConfig
+      sortConfig,
+      edits
     );
     const end = performance.now();
     return {
       flattenedRows: rows,
       aggregationDuration: end - start,
     };
-  }, [rawRecords, collapsedGroups, searchTerm, regionFilter, sortConfig]);
+  }, [rawRecords, collapsedGroups, searchTerm, regionFilter, sortConfig, edits]);
 
   // 3. Toggle group expand / collapse
   const handleToggleGroup = useCallback((groupKey: string) => {
@@ -63,7 +68,7 @@ export function App() {
     });
   }, []);
 
-  // 4. 3-State Column Sorting Cycle: asc -> desc -> none
+  // 4. 3-State Column Sorting Cycle
   const handleSort = useCallback((column: keyof HcpRecord | 'cpi') => {
     setSortConfig((prev) => {
       if (prev.column !== column) {
@@ -75,7 +80,24 @@ export function App() {
     });
   }, []);
 
-  // 5. Update theme
+  // 5. Global Keyboard Shortcuts: Ctrl+Z / Cmd+Z (Undo), Ctrl+Y / Cmd+Shift+Z (Redo)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
+
+  // 6. Update theme
   useEffect(() => {
     let rawConfig: Partial<TenantTheme> | undefined;
     if (selectedTenant === 'default') {
@@ -110,41 +132,61 @@ export function App() {
         </div>
       </header>
 
-      {/* Filter & Search Toolbar */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '12px', alignItems: 'center' }}>
-        <input
-          type="text"
-          placeholder="Search name or ID (e.g. HCP-000578)..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            padding: '6px 12px',
-            borderRadius: 'var(--border-radius)',
-            border: '1px solid var(--border-strong)',
-            width: '300px',
-            fontSize: '14px',
-            outline: 'none',
-          }}
-        />
+      {/* Control Toolbar */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '12px',
+          gap: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <input
+            type="text"
+            placeholder="Search name or ID (e.g. HCP-000578)..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 'var(--border-radius)',
+              border: '1px solid var(--border-strong)',
+              width: '280px',
+              fontSize: '14px',
+              outline: 'none',
+            }}
+          />
 
-        <select
-          value={regionFilter}
-          onChange={(e) => setRegionFilter(e.target.value)}
-          style={{
-            padding: '6px 12px',
-            borderRadius: 'var(--border-radius)',
-            border: '1px solid var(--border-strong)',
-            fontSize: '14px',
-            background: '#ffffff',
-            outline: 'none',
-          }}
-        >
-          {REGIONS_LIST.map((reg) => (
-            <option key={reg} value={reg}>
-              {reg === 'All' ? 'All Regions' : reg}
-            </option>
-          ))}
-        </select>
+          <select
+            value={regionFilter}
+            onChange={(e) => setRegionFilter(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 'var(--border-radius)',
+              border: '1px solid var(--border-strong)',
+              fontSize: '14px',
+              background: '#ffffff',
+              outline: 'none',
+            }}
+          >
+            {REGIONS_LIST.map((reg) => (
+              <option key={reg} value={reg}>
+                {reg === 'All' ? 'All Regions' : reg}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Undo / Redo Actions */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn-action" onClick={undo} disabled={!canUndo} title="Ctrl+Z">
+            ↶ Undo
+          </button>
+          <button className="btn-action" onClick={redo} disabled={!canRedo} title="Ctrl+Y">
+            ↷ Redo
+          </button>
+        </div>
       </div>
 
       {/* Grid */}
@@ -154,8 +196,10 @@ export function App() {
           totalSourceRecords={rawRecords.length}
           renderDuration={aggregationDuration}
           sortConfig={sortConfig}
+          edits={edits}
           onSort={handleSort}
           onToggleGroup={handleToggleGroup}
+          onCommitEdit={commitEdit}
         />
       </main>
     </div>

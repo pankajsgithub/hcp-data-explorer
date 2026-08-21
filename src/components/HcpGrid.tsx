@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { FlattenedRow, SortConfig } from '../types';
+import type { CellEditState, FlattenedRow, SortConfig } from '../types';
 import type { HcpRecord } from '../starter/data-generator';
 import { calculateCPI } from '../utils/aggregation';
 
@@ -9,8 +9,10 @@ interface HcpGridProps {
   totalSourceRecords: number;
   renderDuration: number;
   sortConfig: SortConfig;
+  edits: Record<string, CellEditState>;
   onSort: (column: keyof HcpRecord | 'cpi') => void;
   onToggleGroup: (groupKey: string) => void;
+  onCommitEdit: (rowKey: string, val: number, original: number | string) => void;
 }
 
 export const HcpGrid: React.FC<HcpGridProps> = ({
@@ -18,8 +20,10 @@ export const HcpGrid: React.FC<HcpGridProps> = ({
   totalSourceRecords,
   renderDuration,
   sortConfig,
+  edits,
   onSort,
   onToggleGroup,
+  onCommitEdit,
 }) => {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -82,7 +86,6 @@ export const HcpGrid: React.FC<HcpGridProps> = ({
           {virtualItems.map((virtualRow) => {
             const rowItem = rows[virtualRow.index];
 
-            // 1.Render Group Header Row
             if (rowItem.type === 'group') {
               const group = rowItem.data;
               const isRegion = group.level === 'region';
@@ -112,10 +115,16 @@ export const HcpGrid: React.FC<HcpGridProps> = ({
               );
             }
 
-            // 2. Render Leaf HCP Record Row
             const rec = rowItem.data;
-            const callsNum = typeof rec.calls === 'number' ? rec.calls : Number(rec.calls) || 0;
-            const cpi = calculateCPI(callsNum, rec.trx);
+            const edit = edits[rowItem.rowKey];
+            const currentVal =
+              edit !== undefined
+                ? edit.value
+                : typeof rec.calls === 'number'
+                ? rec.calls
+                : Number(rec.calls) || 0;
+            const cpi = calculateCPI(currentVal, rec.trx);
+            const statusClass = edit ? `status-${edit.status}` : '';
 
             return (
               <div
@@ -131,7 +140,34 @@ export const HcpGrid: React.FC<HcpGridProps> = ({
                 <div className="col-specialty">
                   {rec.specialty ?? <span className="null-value">null</span>}
                 </div>
-                <div className="col-num">{rec.calls}</div>
+                {/* Editable Calls Cell (FR-4) */}
+                <div className="col-num">
+                  <div className="cell-input-wrapper">
+                    <input
+                      type="number"
+                      className={`cell-input ${statusClass}`}
+                      disabled={edit?.status === 'pending'}
+                      defaultValue={currentVal}
+                      key={`${rowItem.rowKey}_${currentVal}`}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          (e.target as HTMLInputElement).blur();
+                        }
+                      }}
+                      onBlur={(e) => {
+                        const nextVal = Number(e.target.value);
+                        if (!isNaN(nextVal)) {
+                          onCommitEdit(rowItem.rowKey, nextVal, rec.calls);
+                        }
+                      }}
+                    />
+                    {edit?.status === 'rejected' && (
+                      <span className="cell-reject-icon" title={edit.rejectionReason}>
+                        ⚠️
+                      </span>
+                    )}
+                  </div>
+                </div>
                 <div className="col-num">{rec.trx.toLocaleString()}</div>
                 <div className="col-num">{rec.nrx.toLocaleString()}</div>
                 <div className="col-cpi">{cpi ?? '—'}</div>
@@ -144,12 +180,12 @@ export const HcpGrid: React.FC<HcpGridProps> = ({
       {/* Metrics Bar */}
       <div className="grid-footer">
         <div>
-          Visible Rows in DOM: <strong>{virtualItems.length}</strong> (Flattened items:{' '}
+          Visible in DOM: <strong>{virtualItems.length}</strong> (Flattened items:{' '}
           <strong>{rows.length.toLocaleString()}</strong> of{' '}
           <strong>{totalSourceRecords.toLocaleString()}</strong> records)
         </div>
         <div>
-          Last aggregation & filter: <strong>{renderDuration.toFixed(2)} ms</strong>
+          Last aggregation & edit cycle: <strong>{renderDuration.toFixed(2)} ms</strong>
         </div>
       </div>
     </div>
