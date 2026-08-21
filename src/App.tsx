@@ -9,6 +9,8 @@ import type { SortConfig, SortDirection } from './types';
 import type { HcpRecord } from './starter/data-generator';
 import './App.css';
 
+const ENABLE_DEMO_DARK_THEME = false;
+
 const DEMO_DARK_THEME: Partial<TenantTheme> = {
   appName: 'Dark Enterprise IQ',
   primary: '#10B981',
@@ -102,10 +104,10 @@ export function App() {
     let rawConfig: Partial<TenantTheme> | undefined;
     if (selectedTenant === 'default') {
       rawConfig = DEFAULT_THEME;
-    } else if (selectedTenant === 'demo_dark') {
+    } else if (ENABLE_DEMO_DARK_THEME && selectedTenant === 'demo_dark') {
       rawConfig = DEMO_DARK_THEME;
     } else {
-      rawConfig = TENANT_THEMES[selectedTenant];
+      rawConfig = TENANT_THEMES[selectedTenant] || DEFAULT_THEME;
     }
     const sanitized = sanitizeTheme(rawConfig);
     setActiveTheme(sanitized);
@@ -127,7 +129,9 @@ export function App() {
             <option value="default">Default</option>
             <option value="aurelia">Aurelia</option>
             <option value="meridian">Meridian (Fallback Test)</option>
-            <option value="demo_dark">Demo Green/Dark Theme</option>
+            {ENABLE_DEMO_DARK_THEME && (
+              <option value="demo_dark">Demo Green/Dark Theme</option>
+            )}
           </select>
         </div>
       </header>
